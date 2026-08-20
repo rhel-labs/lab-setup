@@ -6,6 +6,8 @@
 #   trap 'echo "FATAL: setup failed at line ${LINENO}" >> /tmp/progress.log; exit 1' ERR
 # Commands expected to fail should use || true to opt out of that behavior.
 
+LAB_AUTHFILE=/tmp/lab-auth/auth.json
+
 # Removes katello CA, cleans subscription-manager, and registers using
 # ACTIVATION_KEY and ORG_ID environment variables.
 register_system() {
@@ -14,8 +16,31 @@ register_system() {
   subscription-manager register --activationkey="${ACTIVATION_KEY}" --org="${ORG_ID}" --force
 }
 
-# Logs out of all container registries.
+# Writes registry pull credentials to the shared auth file.
+# TOKEN should be a base64-encoded user:password string as used in auth.json.
+# set +x suppresses tracing to keep the token out of logs.
+# Usage: setup_pull_auth <registry> <token>
+setup_pull_auth() {
+  local REGISTRY="$1"
+  local TOKEN="$2"
+  mkdir -p "$(dirname ${LAB_AUTHFILE})"
+  set +x
+  cat > "${LAB_AUTHFILE}" <<EOF
+{
+  "auths": {
+    "${REGISTRY}": {
+      "auth": "${TOKEN}"
+    }
+  }
+}
+EOF
+  set -x
+  chmod 644 "${LAB_AUTHFILE}"
+}
+
+# Removes the lab auth file and logs out of any podman-managed registries.
 cleanup_registry_auth() {
+  [ -f "${LAB_AUTHFILE}" ] && rm "${LAB_AUTHFILE}"
   podman logout --all 2>/dev/null || true
 }
 
@@ -131,9 +156,9 @@ pull_images() {
   local USER="$1"
   shift
   if [ "${USER}" = "root" ]; then
-    podman pull "$@"
+    podman pull --authfile "${LAB_AUTHFILE}" "$@"
   else
-    runuser -l "${USER}" -c "podman pull $*"
+    runuser -l "${USER}" -c "podman pull --authfile ${LAB_AUTHFILE} $*"
   fi
 }
 

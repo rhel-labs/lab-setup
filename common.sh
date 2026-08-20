@@ -17,19 +17,18 @@ register_system() {
 }
 
 # Writes registry pull credentials to the shared auth file.
-# TOKEN should be a base64-encoded user:password string as used in auth.json.
+# Reads REGISTRY_PULL_TOKEN from the environment — do not pass the token as an argument.
 # set +x suppresses tracing to keep the token out of logs.
-# Usage: setup_pull_auth <registry> <token>
+# Usage: setup_pull_auth <registry>
 setup_pull_auth() {
   local REGISTRY="$1"
-  local TOKEN="$2"
   mkdir -p "$(dirname ${LAB_AUTHFILE})"
   set +x
   cat > "${LAB_AUTHFILE}" <<EOF
 {
   "auths": {
     "${REGISTRY}": {
-      "auth": "${TOKEN}"
+      "auth": "${REGISTRY_PULL_TOKEN}"
     }
   }
 }

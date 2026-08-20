@@ -40,3 +40,10 @@ dnf install -y git
 
 As labs migrate to the EUS image this block is required in every setup script.
 Request `git` be added to the EUS image build to eliminate it.
+
+## Platform notes
+
+**Google guest agent shutdown** — GCP base images include Google guest agents
+(`google-guest-agent`, `google-osconfig-agent`, etc.) that can take up to 10
+minutes to fully stop. Labs that remove these agents (e.g. image mode conversion
+hosts) should account for this in provisioning timeout budgets.

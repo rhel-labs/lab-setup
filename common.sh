@@ -39,7 +39,7 @@ EOF
 
 # Removes the lab auth file and logs out of any podman-managed registries.
 cleanup_registry_auth() {
-  [ -f "${LAB_AUTHFILE}" ] && rm "${LAB_AUTHFILE}"
+  [ -f "${LAB_AUTHFILE}" ] && rm "${LAB_AUTHFILE}" || true
   podman logout --all 2>/dev/null || true
 }
 
@@ -51,7 +51,7 @@ cleanup_subscription() {
 
 # Removes the letsencrypt log which may contain credential traces.
 cleanup_certbot() {
-  [ -f /var/log/letsencrypt/letsencrypt.log ] && rm /var/log/letsencrypt/letsencrypt.log
+  [ -f /var/log/letsencrypt/letsencrypt.log ] && rm /var/log/letsencrypt/letsencrypt.log || true
 }
 
 # Removes temporary directories created by this library (/tmp/lab-*).
@@ -175,8 +175,8 @@ setup_libvirt() {
 
 # Sparse-checks out a path from the lab's own git repo.
 # Requires GIT_REPO and GIT_BRANCH environment variables (injected by the platform).
-# Prints the path to the checked-out files for use by the caller.
-# Usage: SETUP_FILES=$(fetch_setup_files setup-files)
+# Sets the global SETUP_FILES to the checked-out path — call directly, not via $().
+# Usage: fetch_setup_files setup-files
 fetch_setup_files() {
   local REPO_PATH="$1"
   local TMPDIR="/tmp/lab-files-$$"
@@ -184,7 +184,7 @@ fetch_setup_files() {
     --depth=1 --filter=tree:0 "${GIT_REPO}" "${TMPDIR}"
   git -C "${TMPDIR}" sparse-checkout set --no-cone "/${REPO_PATH}"
   git -C "${TMPDIR}" checkout
-  echo "${TMPDIR}/${REPO_PATH}"
+  SETUP_FILES="${TMPDIR}/${REPO_PATH}"
 }
 
 # Appends an export to /etc/profile.d/lab.sh so the value persists across terminal sessions.

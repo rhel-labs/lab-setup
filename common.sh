@@ -1,69 +1,67 @@
 #!/bin/bash
-# Common setup functions for ZT lab provisioning scripts.
 # Source this file after fetching from the lab-setup repo — do not execute directly.
-#
-# Calling scripts should set the ERR trap immediately after sourcing:
+# Set the ERR trap immediately after sourcing:
 #   trap 'echo "FATAL: setup failed at line ${LINENO}" >> /tmp/progress.log; exit 1' ERR
-# Commands expected to fail should use || true to opt out of that behavior.
+# Commands expected to fail use || true to opt out.
 
-LAB_AUTHFILE=/tmp/lab-auth/auth.json
+RH_REGISTRY_AUTHFILE=/tmp/lab-auth/auth.json
 
-# Removes katello CA, cleans subscription-manager, and registers using
-# ACTIVATION_KEY and ORG_ID environment variables.
+
+
+# --- system ---
+
 register_system() {
   dnf -y remove katello-ca-consumer-* 2>/dev/null || true
   subscription-manager clean
   subscription-manager register --activationkey="${ACTIVATION_KEY}" --org="${ORG_ID}" --force
 }
 
-# Writes registry pull credentials to the shared auth file.
-# Reads REGISTRY_PULL_TOKEN from the environment — do not pass the token as an argument.
-# set +x suppresses tracing to keep the token out of logs.
-# Usage: setup_pull_auth <registry>
-setup_pull_auth() {
-  local REGISTRY="$1"
-  mkdir -p "$(dirname ${LAB_AUTHFILE})"
+setup_libvirt() {
+  dnf install -y virt-install libvirt qemu-kvm libvirt-nss
+  systemctl enable --now libvirtd
+  sed -i 's/hosts:\s\+ files/& libvirt libvirt_guest/' /etc/nsswitch.conf
+}
+
+setup_cockpit() {
+  dnf install -y cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-files
+  echo "[WebService]" > /etc/cockpit/cockpit.conf
+  echo "Origins = https://cockpit-${GUID}.${DOMAIN}" >> /etc/cockpit/cockpit.conf
+  echo "AllowUnencrypted = true" >> /etc/cockpit/cockpit.conf
+  systemctl enable --now cockpit.socket
+}
+
+# --- registry ---
+
+# Reads REGISTRY_PULL_TOKEN from the environment. set +x keeps the token out of logs.
+setup_redhat_registry_auth() {
+  mkdir -p "$(dirname ${RH_REGISTRY_AUTHFILE})"
   set +x
-  cat > "${LAB_AUTHFILE}" <<EOF
+  cat > "${RH_REGISTRY_AUTHFILE}" <<EOF
 {
   "auths": {
-    "${REGISTRY}": {
+    "registry.redhat.io": {
       "auth": "${REGISTRY_PULL_TOKEN}"
     }
   }
 }
 EOF
   set -x
-  chmod 644 "${LAB_AUTHFILE}"
+  chmod 644 "${RH_REGISTRY_AUTHFILE}"
 }
 
-# Removes the lab auth file and logs out of any podman-managed registries.
-cleanup_registry_auth() {
-  [ -f "${LAB_AUTHFILE}" ] && rm "${LAB_AUTHFILE}" || true
-  podman logout --all 2>/dev/null || true
+# Usage: pull_images root <image> [image...]
+#        pull_images <user> <image> [image...]
+pull_images() {
+  local USER="$1"
+  shift
+  if [ "${USER}" = "root" ]; then
+    podman pull --authfile "${RH_REGISTRY_AUTHFILE}" "$@"
+  else
+    runuser -l "${USER}" -c "podman pull --authfile ${RH_REGISTRY_AUTHFILE} $*"
+  fi
 }
 
-# Unregisters and cleans subscription-manager state.
-cleanup_subscription() {
-  subscription-manager unregister 2>/dev/null || true
-  subscription-manager clean
-}
-
-# Removes the letsencrypt log which may contain credential traces.
-cleanup_certbot() {
-  [ -f /var/log/letsencrypt/letsencrypt.log ] && rm /var/log/letsencrypt/letsencrypt.log || true
-}
-
-# Removes temporary directories created by this library (/tmp/lab-*).
-# Leaves setup logs (/tmp/progress.log, /tmp/setup-scripts/) intact for review.
-cleanup_tmpfiles() {
-  rm -rf /tmp/lab-*
-}
-
-# Requests a ZeroSSL certificate and starts a TLS registry in one operation.
-# Installs certbot, retries the ACME challenge up to 3 times, then starts the
-# registry and validates it responds before returning.
-# Optional second argument is a path to an htpasswd file to enable authentication.
+# Installs certbot, requests a ZeroSSL cert, starts a TLS registry, and validates it responds.
 # Requires ZEROSSL_EAB_KEY_ID and ZEROSSL_HMAC_KEY environment variables.
 # Usage: setup_ssl_registry <hostname> [htpasswd_file]
 setup_ssl_registry() {
@@ -102,7 +100,7 @@ setup_ssl_registry() {
     exit 1
   fi
 
-  [ -f /var/log/letsencrypt/letsencrypt.log ] && rm /var/log/letsencrypt/letsencrypt.log
+  [ -f /var/log/letsencrypt/letsencrypt.log ] && rm /var/log/letsencrypt/letsencrypt.log || true
 
   if [ -n "${HTPASSWD}" ]; then
     podman run -d \
@@ -129,6 +127,7 @@ setup_ssl_registry() {
   fi
 
   local MAX_REG_RETRIES=5
+  local HTTP_CODE
   RETRY=0
   while [ $RETRY -lt $MAX_REG_RETRIES ]; do
     HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' "https://${HOST}/v2/" 2>/dev/null) || true
@@ -146,37 +145,20 @@ setup_ssl_registry() {
   exit 1
 }
 
-# Pulls one or more container images, optionally as a non-root user.
-# Root pulls go directly to system storage; user pulls use runuser to
-# land images in that user's storage.
-# Usage: pull_images root <image> [image...]
-#        pull_images rhel <image> [image...]
-pull_images() {
-  local USER="$1"
-  shift
-  if [ "${USER}" = "root" ]; then
-    podman pull --authfile "${LAB_AUTHFILE}" "$@"
-  else
-    runuser -l "${USER}" -c "podman pull --authfile ${LAB_AUTHFILE} $*"
-  fi
-}
+# --- utility ---
 
-# Adds a local IP entry to /etc/hosts for internal cluster routing.
-# Usage: add_local_host <hostname>
 add_local_host() {
   echo "10.0.2.2 $1" >> /etc/hosts
 }
 
-# Enables libvirtd and configures NSS for container name resolution.
-setup_libvirt() {
-  systemctl enable --now libvirtd
-  sed -i 's/hosts:\s\+ files/& libvirt libvirt_guest/' /etc/nsswitch.conf
+persist_env_var() {
+  local NAME="$1"
+  local VALUE="$2"
+  echo "export ${NAME}=${VALUE}" >> /etc/profile.d/lab.sh
 }
 
-# Sparse-checks out a path from the lab's own git repo.
+# Sets SETUP_FILES to the checked-out path. Call directly, not via $() — ERR trap must cover failures.
 # Requires GIT_REPO and GIT_BRANCH environment variables (injected by the platform).
-# Sets the global SETUP_FILES to the checked-out path — call directly, not via $().
-# Usage: fetch_setup_files setup-files
 fetch_setup_files() {
   local REPO_PATH="$1"
   local TMPDIR="/tmp/lab-files-$$"
@@ -187,19 +169,23 @@ fetch_setup_files() {
   SETUP_FILES="${TMPDIR}/${REPO_PATH}"
 }
 
-# Appends an export to /etc/profile.d/lab.sh so the value persists across terminal sessions.
-# Usage: persist_env_var NAME value
-persist_env_var() {
-  local NAME="$1"
-  local VALUE="$2"
-  echo "export ${NAME}=${VALUE}" >> /etc/profile.d/lab.sh
+# --- cleanup ---
+
+cleanup_registry_auth() {
+  [ -f "${RH_REGISTRY_AUTHFILE}" ] && rm "${RH_REGISTRY_AUTHFILE}" || true
+  podman logout --all 2>/dev/null || true
 }
 
-# Configures Cockpit for showroom access and enables the socket.
-# Requires GUID and DOMAIN environment variables.
-setup_cockpit() {
-  echo "[WebService]" > /etc/cockpit/cockpit.conf
-  echo "Origins = https://cockpit-${GUID}.${DOMAIN}" >> /etc/cockpit/cockpit.conf
-  echo "AllowUnencrypted = true" >> /etc/cockpit/cockpit.conf
-  systemctl enable --now cockpit.socket
+cleanup_subscription() {
+  subscription-manager unregister 2>/dev/null || true
+  subscription-manager clean
+}
+
+cleanup_certbot() {
+  [ -f /var/log/letsencrypt/letsencrypt.log ] && rm /var/log/letsencrypt/letsencrypt.log || true
+}
+
+# Removes /tmp/lab-* directories. Leaves /tmp/progress.log and /tmp/setup-scripts/ intact.
+cleanup_tmpfiles() {
+  rm -rf /tmp/lab-*
 }

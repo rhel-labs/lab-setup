@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This document reviews the lab setup library design work by examining the 14 ZT lab repositories that were available locally during development. These labs informed the library function set. The analysis identifies pattern types, migration requirements, and implementation challenges.
+This document reviews the lab setup library design work by examining the 14 ZT lab repositories that were available locally during development. These labs informed the library function set. The analysis identifies pattern types, migration requirements, and implementation challenges. Nine of the fourteen labs contain patterns matching library functions, with the reference implementation (zt-image-mode-day2) demonstrating 50% code reduction after migration.
 
 **Sample characteristics:**
 - 14 labs from `/home/mmicene/Projects/repos/zt-labs/`
@@ -158,7 +158,7 @@ Long-term fix: Add git to EUS base image.
 
 ## 3. Patterns Not Covered
 
-The following patterns were observed but are intentionally not abstracted:
+The following patterns were observed but are intentionally not abstracted. These patterns are either too lab-specific (different services, users, booleans per lab), too specialized (only relevant to specific lab types), or too varied to have a common implementation worth abstracting:
 
 **Buildah workflows** — Container builds from scratch rather than image pulls  
 Example: zt-podman-deploy
@@ -177,11 +177,6 @@ Example: zt-image-mode-day2 (GCP guest agent removal)
 
 **Image-mode operations** — Bootc conversion and stateroot manipulation  
 Example: zt-image-mode-day2/setup-imrhel.sh (bootc install to-existing-root)
-
-**Lab-specific content** — Custom HTML, configurations, application code  
-These remain in individual labs or are staged via fetch_setup_files.
-
-**Note:** File staging via heredocs IS covered — `fetch_setup_files` replaces heredoc content by fetching committed files from the repository.
 
 ---
 

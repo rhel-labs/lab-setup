@@ -21,15 +21,17 @@
 gh api /orgs/rhpds/teams/zt-rhel-bu-developers/repos --paginate --jq '.[].name' > repos.txt
 ```
 
-### Step 2: Fetch setup scripts
+### Step 2: Fetch setup scripts and main.yml
 Workflow that:
 - Takes repo list from step 1
-- For each repo, fetches all `setup-*.sh` files from `setup-automation/` via raw.githubusercontent.com
-- Stores: repo name, script names, script content
+- For each repo, fetches from `setup-automation/`:
+  - All `setup-*.sh` files
+  - `main.yml`
+- Stores: repo name, script names, script content, main.yml content
 - Skips 404s silently (repos without setup-automation/)
 
 ### Step 3: Pattern extraction per repo
-Each agent analyzes one repo's scripts and returns structured data:
+Each agent analyzes one repo's scripts and main.yml, returns structured data:
 
 ```json
 {
@@ -45,10 +47,11 @@ Each agent analyzes one repo's scripts and returns structured data:
     "ansible-runner install and config (15 lines)",
     "firewalld zone setup (8 lines)"
   ],
-  "env_vars_present": ["GUID", "DOMAIN", "ACTIVATION_KEY"],
+  "env_vars_passed_in_main": ["GUID", "DOMAIN", "ACTIVATION_KEY"],
+  "env_vars_referenced_in_scripts": ["GUID", "DOMAIN", "ACTIVATION_KEY", "GIT_REPO"],
   "challenges": [
     "hardcoded org ID on line 15",
-    "no GIT_REPO vars for sparse-checkout"
+    "GIT_REPO referenced in script but not passed in main.yml"
   ]
 }
 ```

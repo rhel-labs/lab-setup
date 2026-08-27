@@ -2,7 +2,7 @@
 
 **Purpose:** Validate whether the lab setup library fits the real catalog.
 
-**Status:** Not started — documented for future execution.
+**Status:** Complete — see CATALOG_ANALYSIS_RESULTS.md (2026-08-24).
 
 ---
 
@@ -90,7 +90,7 @@ The output is structured Q&A format answering specific questions:
 - `setup_ssl_registry`: found in Y repos (examples: ...)
 - `fetch_setup_files`: found in Z repos (examples: ...)
 
-### Q: Which library functions appear to be baseline-specific?
+### Q: Which library functions show no independent evidence beyond the original design sample?
 - `setup_libvirt`: only found in N repos (same as baseline)
 - `persist_env_var`: not found in any additional repos beyond baseline
 

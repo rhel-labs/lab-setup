@@ -103,7 +103,7 @@ setup_ssl_registry() {
   [ -f /var/log/letsencrypt/letsencrypt.log ] && rm /var/log/letsencrypt/letsencrypt.log || true
 
   if [ -n "${HTPASSWD}" ]; then
-    podman run -d \
+    podman run -d --replace \
       --name registry \
       -p 443:5000 \
       -v "${HTPASSWD}":/auth/htpasswd:ro \
@@ -116,7 +116,7 @@ setup_ssl_registry() {
       -e REGISTRY_HTTP_TLS_KEY=/certs/privkey.pem \
       quay.io/mmicene/registry:2
   else
-    podman run -d \
+    podman run -d --replace \
       --name registry \
       -p 443:5000 \
       -v "${CERT_DIR}/fullchain.pem":/certs/fullchain.pem:ro \

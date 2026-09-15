@@ -10,20 +10,29 @@ RH_REGISTRY_AUTHFILE=/tmp/lab-auth/auth.json
 
 # --- system ---
 
-register_system() {
+dnf_install() {
+  rpm -q "$@" &>/dev/null || dnf install -y "$@"
+}
+
+setup_epel() {
+  rpm -q epel-release &>/dev/null || \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm
+}
+
+register_system_cdn() {
   dnf -y remove katello-ca-consumer-* 2>/dev/null || true
   subscription-manager clean
   subscription-manager register --activationkey="${ACTIVATION_KEY}" --org="${ORG_ID}" --force
 }
 
 setup_libvirt() {
-  dnf install -y virt-install libvirt qemu-kvm libvirt-nss
+  dnf_install virt-install libvirt qemu-kvm libvirt-nss
   systemctl enable --now libvirtd
   grep -q 'libvirt' /etc/nsswitch.conf || sed -i 's/hosts:\s\+ files/& libvirt libvirt_guest/' /etc/nsswitch.conf
 }
 
 setup_cockpit() {
-  dnf install -y cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-files
+  dnf_install cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-files
   echo "[WebService]" > /etc/cockpit/cockpit.conf
   echo "Origins = https://cockpit-${GUID}.${DOMAIN}" >> /etc/cockpit/cockpit.conf
   echo "AllowUnencrypted = true" >> /etc/cockpit/cockpit.conf
@@ -49,16 +58,51 @@ EOF
   chmod 644 "${RH_REGISTRY_AUTHFILE}"
 }
 
-# Usage: pull_images root <image> [image...]
-#        pull_images <user> <image> [image...]
-pull_images() {
+# Usage: pull_private_images <authfile> root <image> [image...]
+#        pull_private_images <authfile> <user> <image> [image...]
+pull_private_images() {
+  local AUTHFILE="$1"
+  local USER="$2"
+  shift 2
+  local MAX_RETRIES=3
+  local RETRY=0
+  while [ $RETRY -lt $MAX_RETRIES ]; do
+    local RC=0
+    if [ "${USER}" = "root" ]; then
+      podman pull --authfile "${AUTHFILE}" "$@" || RC=$?
+    else
+      runuser -l "${USER}" -c "podman pull --authfile ${AUTHFILE} $*" || RC=$?
+    fi
+    [ $RC -eq 0 ] && return 0
+    RETRY=$((RETRY + 1))
+    echo "Image pull attempt ${RETRY} of ${MAX_RETRIES} failed, retrying in 30 seconds..." >> /tmp/progress.log
+    sleep 30
+  done
+  echo "FATAL: Failed to pull images after ${MAX_RETRIES} attempts" >> /tmp/progress.log
+  exit 1
+}
+
+# Usage: pull_public_images root <image> [image...]
+#        pull_public_images <user> <image> [image...]
+pull_public_images() {
   local USER="$1"
   shift
-  if [ "${USER}" = "root" ]; then
-    podman pull --authfile "${RH_REGISTRY_AUTHFILE}" "$@"
-  else
-    runuser -l "${USER}" -c "podman pull --authfile ${RH_REGISTRY_AUTHFILE} $*"
-  fi
+  local MAX_RETRIES=3
+  local RETRY=0
+  while [ $RETRY -lt $MAX_RETRIES ]; do
+    local RC=0
+    if [ "${USER}" = "root" ]; then
+      podman pull "$@" || RC=$?
+    else
+      runuser -l "${USER}" -c "podman pull $*" || RC=$?
+    fi
+    [ $RC -eq 0 ] && return 0
+    RETRY=$((RETRY + 1))
+    echo "Image pull attempt ${RETRY} of ${MAX_RETRIES} failed, retrying in 30 seconds..." >> /tmp/progress.log
+    sleep 30
+  done
+  echo "FATAL: Failed to pull images after ${MAX_RETRIES} attempts" >> /tmp/progress.log
+  exit 1
 }
 
 # Installs certbot, requests a ZeroSSL cert, starts a TLS registry, and validates it responds.
@@ -72,29 +116,31 @@ setup_ssl_registry() {
   local RETRY=0
   
   podman rm -f registry
-  dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm
-  dnf install -y certbot
+  setup_epel
+  dnf_install certbot
 
-  while [ $RETRY -lt $MAX_CERT_RETRIES ]; do
-    set +x
-    certbot certonly \
-      --eab-kid "${ZEROSSL_EAB_KEY_ID}" \
-      --eab-hmac-key "${ZEROSSL_HMAC_KEY}" \
-      --server "https://acme.zerossl.com/v2/DV90" \
-      --standalone --preferred-challenges http \
-      -d "${HOST}" \
-      --non-interactive --agree-tos -m trackbot@instruqt.com || true
-    set -x
+  if [ ! -f "${CERT_DIR}/fullchain.pem" ] || [ ! -f "${CERT_DIR}/privkey.pem" ]; then
+    while [ $RETRY -lt $MAX_CERT_RETRIES ]; do
+      set +x
+      certbot certonly \
+        --eab-kid "${ZEROSSL_EAB_KEY_ID}" \
+        --eab-hmac-key "${ZEROSSL_HMAC_KEY}" \
+        --server "https://acme.zerossl.com/v2/DV90" \
+        --standalone --preferred-challenges http \
+        -d "${HOST}" \
+        --non-interactive --agree-tos -m trackbot@instruqt.com || true
+      set -x
 
-    if [ -f "${CERT_DIR}/fullchain.pem" ] && [ -f "${CERT_DIR}/privkey.pem" ]; then
-      echo "SSL certificate obtained for ${HOST}" >> /tmp/progress.log
-      break
-    fi
+      if [ -f "${CERT_DIR}/fullchain.pem" ] && [ -f "${CERT_DIR}/privkey.pem" ]; then
+        echo "SSL certificate obtained for ${HOST}" >> /tmp/progress.log
+        break
+      fi
 
-    RETRY=$((RETRY + 1))
-    echo "Certificate attempt ${RETRY} of ${MAX_CERT_RETRIES} failed, retrying in 15 seconds..." >> /tmp/progress.log
-    sleep 15
-  done
+      RETRY=$((RETRY + 1))
+      echo "Certificate attempt ${RETRY} of ${MAX_CERT_RETRIES} failed, retrying in 15 seconds..." >> /tmp/progress.log
+      sleep 15
+    done
+  fi
 
   if [ ! -f "${CERT_DIR}/fullchain.pem" ] || [ ! -f "${CERT_DIR}/privkey.pem" ]; then
     echo "FATAL: Failed to obtain SSL certificate for ${HOST} after ${MAX_CERT_RETRIES} attempts" >> /tmp/progress.log

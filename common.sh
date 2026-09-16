@@ -114,8 +114,10 @@ setup_ssl_registry() {
   local CERT_DIR="/etc/letsencrypt/live/${HOST}"
   local MAX_CERT_RETRIES=3
   local RETRY=0
+  local REGISTRY_IMG=ghcr.io/rhel-labs/registry:latest
   
   podman rm -f registry
+  pull_public_images root "${REGISTRY_IMG}"
   setup_epel
   dnf_install certbot
 
@@ -161,7 +163,7 @@ setup_ssl_registry() {
       -v "${CERT_DIR}/privkey.pem":/certs/privkey.pem:ro \
       -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/fullchain.pem \
       -e REGISTRY_HTTP_TLS_KEY=/certs/privkey.pem \
-      quay.io/mmicene/registry:2
+      "${REGISTRY_IMG}"
   else
     podman run -d \
       --name registry \
@@ -170,7 +172,7 @@ setup_ssl_registry() {
       -v "${CERT_DIR}/privkey.pem":/certs/privkey.pem:ro \
       -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/fullchain.pem \
       -e REGISTRY_HTTP_TLS_KEY=/certs/privkey.pem \
-      quay.io/mmicene/registry:2
+      "${REGISTRY_IMG}"
   fi
 
   local MAX_REG_RETRIES=5

@@ -8,6 +8,24 @@ RH_REGISTRY_AUTHFILE=/tmp/lab-auth/auth.json
 
 
 
+# --- internal ---
+
+# Polls until a systemd unit is active or retries are exhausted.
+# Needed because systemctl enable --now exits 0 on fork for Type=simple units,
+# before the process has had a chance to fail.
+_assert_unit_active() {
+  local UNIT="$1"
+  local RETRY=0
+  local MAX_RETRIES=5
+  while [ $RETRY -lt $MAX_RETRIES ]; do
+    systemctl is-active "${UNIT}" && return 0
+    RETRY=$((RETRY + 1))
+    sleep 1
+  done
+  echo "FATAL: ${UNIT} not active after start" >> /tmp/progress.log
+  exit 1
+}
+
 # --- system ---
 
 dnf_install() {
@@ -29,6 +47,7 @@ setup_libvirt() {
   dnf_install virt-install libvirt qemu-kvm libvirt-nss
   systemctl enable --now libvirtd
   grep -q 'libvirt' /etc/nsswitch.conf || sed -i 's/hosts:\s\+ files/& libvirt libvirt_guest/' /etc/nsswitch.conf
+  _assert_unit_active libvirtd
 }
 
 setup_cockpit() {
@@ -37,6 +56,7 @@ setup_cockpit() {
   echo "Origins = https://cockpit-${GUID}.${DOMAIN}" >> /etc/cockpit/cockpit.conf
   echo "AllowUnencrypted = true" >> /etc/cockpit/cockpit.conf
   systemctl enable --now cockpit.socket
+  _assert_unit_active cockpit.socket
 }
 
 # --- registry ---

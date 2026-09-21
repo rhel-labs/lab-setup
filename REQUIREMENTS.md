@@ -61,7 +61,13 @@ All library functions must be safe to run multiple times against the same host. 
 
 ## Internal retry policy
 
-The setup script runs as an init container inside the zerotouch pod. If it exits non-zero, the kubelet restarts the container with exponential backoff (10s → 300s max). Each restart replays the full setup script from the top against a VM with partial state. The cost of a kubelet restart cycle is high — several minutes of replay before reaching the failure point again.
+The setup script runs as an init container inside the zerotouch pod. The kubelet retries a failed init container indefinitely with exponential backoff (10s → 300s max). The only external timeout is the Ansible polling budget (~50 min) — after which Ansible marks provisioning failed without knowing why or where. There is no platform-level mechanism to distinguish a broken lab from a slow one.
+
+**A false positive exit 0 is worse than a failure.** A non-zero exit gets retried. An exit 0 tells the platform the lab is ready — the pod becomes ready, Ansible considers provisioning complete, and a broken environment is handed to the student with no further recourse. Every function must verify that its promised state is actually true before returning 0, not just that the underlying operation completed without error.
+
+`setup_ssl_registry` is the canonical example: it does not exit 0 after `podman run` succeeds — it polls `/v2/` until the registry actually responds, then exits 0. That is the pattern. A function that exits 0 because `systemctl enable --now` returned 0 is trusting an operation exit code, not verifying a state.
+
+Each restart replays the full setup script from the top against a VM with partial state. The cost of a kubelet restart cycle is high — several minutes of replay before reaching the failure point again.
 
 **Retry internally** when the failure is transient (resolves in seconds), and the retry is cheaper than a full kubelet restart cycle plus setup replay. Use a bounded retry loop with short sleep between attempts. Exit non-zero once retries are exhausted.
 
@@ -80,6 +86,9 @@ The setup script runs as an init container inside the zerotouch pod. If it exits
 - `setup_ssl_registry()`: certbot runs unconditionally on retry even when cert files already exist. `|| true` covers its non-zero exit, existing certs are used, and execution continues correctly — but certbot binds port 80 briefly and consumes a ZeroSSL rate-limited call unnecessarily. A `[ ! -f "${CERT_DIR}/fullchain.pem" ]` guard before the loop would skip it cleanly.
 - `add_local_host()`: appends without guard — creates duplicate `/etc/hosts` entries on retry. Harmless for name resolution (first match wins) but untidy.
 - `persist_env_var()`: appends without guard — creates duplicate export lines on retry. Harmless; same assignment runs twice with same result.
+
+**Pattern for state verification (use in new functions):**
+- Service liveness: call `_assert_unit_active <unit>` after `systemctl enable --now`. `enable --now` exits 0 on fork for `Type=simple` units before the process has had a chance to fail; `_assert_unit_active` polls `systemctl is-active` to confirm the unit is in settled active state before returning.
 
 ## Platform notes
 

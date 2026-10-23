@@ -48,6 +48,28 @@ git clone --depth=1 https://github.com/rhel-labs/lab-setup "${LIBDIR}"
 echo "common.sh sourced from ${LIBDIR}" >> "${PROGRESS}"
 
 # =========================================================
+# subscription (credential-gated) — must run before any package work
+# =========================================================
+
+if [[ -n "${ACTIVATION_KEY:-}" && -n "${ORG_ID:-}" ]]; then
+  echo "Testing register_system_cdn..." >> "${PROGRESS}"
+  register_system_cdn
+  echo "PASS: register_system_cdn" >> "${PROGRESS}"
+
+  if [[ -n "${RHEL_RELEASE:-}" ]]; then
+    echo "Testing pin_rhel_release ${RHEL_RELEASE}..." >> "${PROGRESS}"
+    pin_rhel_release "${RHEL_RELEASE}"
+    echo "PASS: pin_rhel_release" >> "${PROGRESS}"
+  else
+    SKIPPED+=("pin_rhel_release")
+    echo "SKIP: pin_rhel_release (RHEL_RELEASE not set)" >> "${PROGRESS}"
+  fi
+else
+  SKIPPED+=("register_system_cdn" "pin_rhel_release")
+  echo "SKIP: register_system_cdn, pin_rhel_release (ACTIVATION_KEY and/or ORG_ID not set)" >> "${PROGRESS}"
+fi
+
+# =========================================================
 # system
 # =========================================================
 
@@ -118,28 +140,6 @@ if [[ -n "${REGISTRY_PULL_TOKEN:-}" ]]; then
 else
   SKIPPED+=("setup_redhat_registry_auth" "pull_private_images")
   echo "SKIP: setup_redhat_registry_auth, pull_private_images (REGISTRY_PULL_TOKEN not set)" >> "${PROGRESS}"
-fi
-
-# =========================================================
-# subscription (credential-gated)
-# =========================================================
-
-if [[ -n "${ACTIVATION_KEY:-}" && -n "${ORG_ID:-}" ]]; then
-  echo "Testing register_system_cdn..." >> "${PROGRESS}"
-  register_system_cdn
-  echo "PASS: register_system_cdn" >> "${PROGRESS}"
-
-  if [[ -n "${RHEL_RELEASE:-}" ]]; then
-    echo "Testing pin_rhel_release ${RHEL_RELEASE}..." >> "${PROGRESS}"
-    pin_rhel_release "${RHEL_RELEASE}"
-    echo "PASS: pin_rhel_release" >> "${PROGRESS}"
-  else
-    SKIPPED+=("pin_rhel_release")
-    echo "SKIP: pin_rhel_release (RHEL_RELEASE not set)" >> "${PROGRESS}"
-  fi
-else
-  SKIPPED+=("register_system_cdn" "pin_rhel_release")
-  echo "SKIP: register_system_cdn, pin_rhel_release (ACTIVATION_KEY and/or ORG_ID not set)" >> "${PROGRESS}"
 fi
 
 # =========================================================

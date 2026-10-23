@@ -43,6 +43,25 @@ register_system_cdn() {
   subscription-manager register --activationkey="${ACTIVATION_KEY}" --org="${ORG_ID}" --force
 }
 
+pin_rhel_release() {
+  local RELEASE="$1"
+  if [ -z "${RELEASE}" ]; then
+    echo "FATAL: pin_rhel_release requires a release argument (e.g. 9.4)" >> /tmp/progress.log
+    exit 1
+  fi
+  local MAJOR="${RELEASE%%.*}"
+  local ARCH
+  ARCH=$(uname -m)
+  subscription-manager release --set="${RELEASE}"
+  subscription-manager repos \
+    --disable="rhel-${MAJOR}-for-${ARCH}-baseos-rpms" \
+    --disable="rhel-${MAJOR}-for-${ARCH}-appstream-rpms" \
+    --enable="rhel-${MAJOR}-for-${ARCH}-baseos-eus-rpms" \
+    --enable="rhel-${MAJOR}-for-${ARCH}-appstream-eus-rpms"
+  dnf clean all
+  echo "RHEL release pinned to ${RELEASE}, EUS repos active" >> /tmp/progress.log
+}
+
 setup_libvirt() {
   dnf_install virt-install libvirt qemu-kvm libvirt-nss
   systemctl enable --now libvirtd
